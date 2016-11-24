@@ -1,159 +1,210 @@
 package cz.etnetera.smartmeter.jmeter;
 
-import java.net.InetAddress;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import org.apache.jmeter.assertions.AssertionResult;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.visualizers.backend.AbstractBackendListenerClient;
 import org.apache.jmeter.visualizers.backend.BackendListenerContext;
-import org.elasticsearch.client.Client;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
-import org.elasticsearch.transport.client.PreBuiltTransportClient;
+import org.apache.jorphan.logging.LoggingManager;
+import org.apache.log.Logger;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 /**
  * Created by klingac on 19.11.16.
  */
 public class ElasticsearchBackendListenerClient extends AbstractBackendListenerClient {
 
-    private Client client;
-    private String indexName;
-    private String dateTimeAppendFormat;
-    private String sampleType;
-    private String runId;
-    private long offset;
-    private static final int DEFAULT_ELASTICSEARCH_PORT = 9300;
-    private static final String TIMESTAMP = "timestamp";
-    private static final String VAR_DELIMITER = "~";
-    private static final String VALUE_DELIMITER = "=";
-    @Override
-    public void handleSampleResults(List<SampleResult> results,
-                                    BackendListenerContext context) {
-        String indexNameToUse = indexName;
-        for(SampleResult result : results) {
-            Map<String,Object> jsonObject = getMap(result);
-            if(dateTimeAppendFormat != null) {
-                SimpleDateFormat sdf = new SimpleDateFormat(dateTimeAppendFormat);
-                indexNameToUse = indexName + sdf.format(jsonObject.get(TIMESTAMP));
-            }
-            client.prepareIndex(indexNameToUse, sampleType).setSource(jsonObject).execute().actionGet();
-        }
+    private static final String ES_PROTOCOL = "elasticsearch.protocol";
+    private static final String ES_HOST = "elasticsearch.host";
+    private static final String ES_PORT = "elasticsearch.port";
+    private static final String ES_INDEX = "elasticsearch.index";
+    private static final String ES_TYPE = "elasticsearch.type";
+    private static final String ES_TIMESTAMP = "elasticsearch.timestamp";
+    private static final String ES_STATUSCODE = "elasticsearch.statuscode";
 
-    }
+    /**
+     * Initialize logger
+     */
+    private static final Logger LOGGER = LoggingManager.getLoggerForClass();
 
-    private Map<String, Object> getMap(SampleResult result) {
-        Map<String, Object> map = new HashMap<String, Object>();
-        String[] sampleLabels = result.getSampleLabel().split(VAR_DELIMITER);
-        map.put("SampleLabel", sampleLabels[0]);
-        for(int i=1;i<sampleLabels.length;i++) {
-            String[] varNameAndValue =sampleLabels[i].split(VALUE_DELIMITER);
-            map.put(varNameAndValue[0], varNameAndValue[1]);
-        }
+    /**
+     * Lock for syncro
+     */
+    private static final Object STATIC_LOCK = new Object();
 
-        map.put("ResponseTime", result.getTime());
-        map.put("ElapsedTime", result.getTime());
-        map.put("ResponseCode", result.getResponseCode());
-        map.put("ResponseMessage", result.getResponseMessage());
-        map.put("ThreadName", result.getThreadName());
-        map.put("DataType", result.getDataType());
-        map.put("Success", String.valueOf(result.isSuccessful()));
-        //map.put("FailureMessage", result.get);
-        map.put("GrpThreads", result.getGroupThreads());
-        map.put("AllThreads", result.getAllThreads());
-        map.put("URL", result.getUrlAsString());
-        map.put("Latency", result.getLatency());
-        map.put("ConnectTime", result.getConnectTime());
-        map.put("SampleCount", result.getSampleCount());
-        map.put("ErrorCount", result.getErrorCount());
-        map.put("Bytes", result.getBytes());
-        map.put("BodySize", result.getBodySize());
-        map.put("ContentType", result.getContentType());
-        //map.put("HostName", result.get);
-        map.put("IdleTime", result.getIdleTime());
-        map.put(TIMESTAMP, new Date(result.getTimeStamp()));
-        map.put("NormalizedTimestamp", new Date(result.getTimeStamp() - offset));
-        map.put("StartTime", new Date(result.getStartTime()));
-        map.put("EndTime", new Date(result.getEndTime()));
-        map.put("RunId", runId);
-        //TODO assertion results
+    /**
+     * ES connection status
+     */
+    private boolean isESAlive = false;
 
-        AssertionResult[] assertions = result.getAssertionResults();
-        int count=0;
-        if(assertions != null) {
-            Map<String,Object> [] assertionArray = new HashMap[assertions.length];
-            for(AssertionResult assertionResult : assertions) {
-                Map<String,Object> assertionMap = new HashMap<String,Object>();
-                assertionMap.put("Failure", assertionResult.isError() || assertionResult.isFailure());
-                assertionMap.put("FailureMessage", assertionResult.getFailureMessage());
-                assertionMap.put("Name", assertionResult.getName());
-                assertionArray[count++] = assertionMap;
-            }
-            map.put("Assertions", assertionArray);
-        }
-        return map;
-    }
-
-    @Override
-    public void setupTest(BackendListenerContext context) throws Exception {
-        // TODO Auto-generated method stub
-        String elasticsearchCluster = context.getParameter("elasticsearchCluster");
-
-        String[] servers = elasticsearchCluster.split(",");
-
-        indexName = context.getParameter("indexName");
-        dateTimeAppendFormat=context.getParameter("dateTimeAppendFormat");
-        if(dateTimeAppendFormat!=null && dateTimeAppendFormat.trim().equals("")) {
-            dateTimeAppendFormat = null;
-        }
-        sampleType = context.getParameter("sampleType");
-        client = new PreBuiltTransportClient(Settings.EMPTY);
-        for(String serverPort: servers) {
-            String[] serverAndPort = serverPort.split(":");
-            int port = DEFAULT_ELASTICSEARCH_PORT;
-            if(serverAndPort.length == 2) {
-                port = Integer.parseInt(serverAndPort[1]);
-            }
-            ((TransportClient)client).addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName(serverAndPort[0]), port));
-        }
-        String normalizedTime = context.getParameter("normalizedTime");
-        if(normalizedTime != null && normalizedTime.trim().length() > 0 ){
-            SimpleDateFormat sdf2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSX");
-            Date d = sdf2.parse(normalizedTime);
-            long normalizedDate = d.getTime();
-            Date now = new Date();
-            offset = now.getTime() - normalizedDate;
-        }
-        runId = context.getParameter("runId");
-        super.setupTest(context);
-    }
+    /**
+     * Mediatype JSON
+     */
+    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     @Override
     public Arguments getDefaultParameters() {
-        Arguments arguments = new Arguments();
-        arguments.addArgument("elasticsearchCluster", "localhost:" + DEFAULT_ELASTICSEARCH_PORT);
-        arguments.addArgument("indexName", "jmeter-elasticsearch");
-        arguments.addArgument("sampleType", "SampleResult");
-        arguments.addArgument("dateTimeAppendFormat", "-yyyy-MM-DD");
-        arguments.addArgument("normalizedTime","2015-01-01 00:00:00.000-00:00");
-        arguments.addArgument("runId", "${__UUID()}");
-        //arguments.addArgument("summaryOnly", "true");
-        //arguments.addArgument("samplersList", "");
-        return arguments;
+        Arguments parameters = new Arguments();
+        parameters.addArgument(ES_PROTOCOL, "http");
+        parameters.addArgument(ES_HOST, null);
+        parameters.addArgument(ES_PORT, "9200");
+        parameters.addArgument(ES_INDEX, "jmeter");
+        parameters.addArgument(ES_TYPE, null);
+        parameters.addArgument(ES_TIMESTAMP, "yyyy-MM-dd'T'HH:mm:ss.SSSZZ");
+        parameters.addArgument(ES_STATUSCODE, "531");
+        return parameters;
+    }
 
+    @Override
+    public void setupTest(BackendListenerContext ctx) throws Exception {
+        OkHttpClient client = new OkHttpClient();
+
+        String esEndpoint = ctx.getParameter(ES_PROTOCOL) + "://" + ctx.getParameter(ES_HOST) + ":"
+                + ctx.getParameter(ES_PORT);
+
+        Request request = new Request.Builder().url(esEndpoint).build();
+
+        Response response = null;
+
+        try {
+            response = client.newCall(request).execute();
+            boolean resu = response.isSuccessful();
+
+            isESAlive = resu ? true : false;
+
+            if (isESAlive) {
+                LOGGER.info("Elasticsearch is UP!");
+            } else {
+                LOGGER.error("Elasticsearch is DOWN!");
+            }
+
+        } catch (java.io.IOException e) {
+            LOGGER.error("Error with the Elasticsearch connection.");
+        }
 
     }
 
     @Override
     public void teardownTest(BackendListenerContext context) throws Exception {
-        client.close();
-        super.teardownTest(context);
+        // Not implemented
+    }
+
+    @Override
+    public void handleSampleResults(List<SampleResult> sampleResults, BackendListenerContext ctx) {
+
+        if (!isESAlive) {
+            LOGGER.error("Elasticsearch is DOWN. Quitting");
+            return;
+        }
+
+        synchronized (STATIC_LOCK) {
+            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+            OkHttpClient client = new OkHttpClient();
+            SimpleDateFormat sdf = new SimpleDateFormat(ctx.getParameter(ES_TIMESTAMP));
+
+            for (SampleResult sampleResult : sampleResults) {
+                ElasticSearchSampleResult esResu = new ElasticSearchSampleResult();
+
+                esResu.setTimestamp(sdf.format(new Date(sampleResult.getTimeStamp())));
+                esResu.setStartTime(sdf.format(new Date(sampleResult.getStartTime())));
+                esResu.setEndTime(Long.toString(sampleResult.getTime()));
+                esResu.setTime(sampleResult.getTime());
+                esResu.setLatency(sampleResult.getLatency());
+                esResu.setConnectTime(sampleResult.getConnectTime());
+                esResu.setIdleTime(sampleResult.getIdleTime());
+                esResu.setSampleLabel(sampleResult.getSampleLabel());
+                esResu.setGroupName("Group:"+sampleResult.getSampleLabel()); //.substring(0,
+//                        sampleResult.getSampleLabel(true).indexOf(sampleResult.getSampleLabel()) - 1));
+
+                // For Elasticsearch mapping. Mapping states that the
+                // ResponseCode must be numeric
+                if (sampleResult.isResponseCodeOK() && StringUtils.isNumeric(sampleResult.getResponseCode())) {
+                    esResu.setResponseCode(sampleResult.getResponseCode());
+                } else {
+                    esResu.setResponseCode(ctx.getParameter(ES_STATUSCODE));
+                }
+
+                esResu.setIsResponseCodeOk(sampleResult.isResponseCodeOK());
+                esResu.setIsSuccessful(sampleResult.isSuccessful());
+                esResu.setSampleCount(sampleResult.getSampleCount());
+                esResu.setErrorCount(sampleResult.getErrorCount());
+                esResu.setContentType(sampleResult.getContentType());
+                esResu.setMediaType(sampleResult.getMediaType());
+                esResu.setDataType(sampleResult.getDataType());
+                esResu.setRequestHeaders(sampleResult.getRequestHeaders());
+                esResu.setResponseHeaders(sampleResult.getResponseHeaders());
+                esResu.setHeadersSize(sampleResult.getHeadersSize());
+                esResu.setSamplerData(sampleResult.getSamplerData());
+                esResu.setResponseMessage(sampleResult.getResponseMessage());
+                esResu.setResponseData(sampleResult.getResponseDataAsString());
+                esResu.setBodySize(sampleResult.getBodySize());
+                esResu.setBytes(sampleResult.getBytes());
+
+                String esResuJson = gson.toJson(esResu);
+
+                String esEndpoint = ctx.getParameter(ES_PROTOCOL) + "://" + ctx.getParameter(ES_HOST) + ":"
+                        + ctx.getParameter(ES_PORT) + "/" + ctx.getParameter(ES_INDEX) + "/"
+                        + ctx.getParameter(ES_TYPE);
+
+                LOGGER.debug("Elasticsearch request URL: " + esEndpoint);
+                LOGGER.debug("Elasticsearch request data:\n" + esResuJson);
+
+                Response response = null;
+
+                try {
+                    response = callES(esEndpoint, esResuJson, client);
+
+                    LOGGER.debug("Elasticsearch response code: " + response.code());
+                    LOGGER.debug("Elasticsearch response data:\n" + response.toString());
+
+                } catch (IOException e) {
+                    LOGGER.error("Error with the Elasticsearch connection.");
+                }
+
+            }
+
+        }
+
+    }
+
+    /**
+     * Send sample to the Elasticsearch
+     *
+     * @param url
+     *            ES host+port+index
+     * @param json
+     *            Serialized sample
+     * @param client
+     *            OkHttpClient
+     * @return OkHttpClient Response
+     *
+     * @throws IOException
+     */
+    private Response callES(String url, String json, OkHttpClient client) throws IOException {
+        RequestBody body = RequestBody.create(JSON, json);
+        Request request = new Request.Builder().url(url).post(body).build();
+
+        Response response = null;
+        try {
+            response = client.newCall(request).execute();
+            return response;
+        } finally {
+            response.body().close();
+        }
+
     }
 
 }
