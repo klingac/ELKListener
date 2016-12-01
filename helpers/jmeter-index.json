@@ -1,0 +1,92 @@
+{
+  "template": "smartmeter*",
+  "mappings": {
+    "ElasticBackendSampleResult": {
+      "properties": {
+        "StartTime": {
+          "type": "date",
+          "format": "dateOptionalTime"
+        },
+        "EndTime": {
+          "type": "date",
+          "format": "dateOptionalTime"
+        },
+        "Time": {
+          "type": "long"
+        },
+        "Latency": {
+          "type": "long"
+        },
+        "ConnectTime": {
+          "type": "long"
+        },
+        "IdleTime": {
+          "type": "long"
+        },
+        "SampleLabel": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "GroupName": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "ResponseCode": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "IsResponseCodeOk": {
+          "type": "boolean"
+        },
+        "IsSuccessful": {
+          "type": "boolean"
+        },
+        "SampleCount": {
+          "type": "integer"
+        },
+        "ErrorCount": {
+          "type": "integer"
+        },
+        "ContentType": {
+          "type": "string"
+        },
+        "MediaType": {
+          "type": "string"
+        },
+        "DataType": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "RequestHeaders": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "ResponseHeaders": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "HeadersSize": {
+          "type": "long"
+        },
+        "ResponseMessage": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "ResponseData": {
+          "type": "string",
+          "index": "not_analyzed"
+        },
+        "BodySize": {
+          "type": "long"
+        },
+        "Bytes": {
+          "type": "long"
+        },
+        "@timestamp": {
+          "type": "date",
+          "format": "dateOptionalTime"
+        }
+      }
+    }
+  }
+}

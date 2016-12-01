@@ -7,7 +7,7 @@ import com.google.gson.annotations.SerializedName;
  */
 public class ElasticSearchSampleResult {
 
-    @SerializedName("Timestamp")
+    @SerializedName("@timestamp")
     private String Timestamp;
 
     @SerializedName("StartTime")
